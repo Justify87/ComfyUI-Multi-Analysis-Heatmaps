@@ -105,3 +105,12 @@ These tools are meant for exploration and intuition, not absolute ground-truth j
 1. Clone or download this repo into your `ComfyUI/custom_nodes/` folder:
    ```bash
    git clone https://github.com/yourname/ComfyUI-MultiAnalysisHeatmaps
+
+
+## Additionals
+
+- Upscaler Used in the example workflow:
+- https://github.com/daredevilstudio/AI-upscaling-models
+- https://github.com/daredevilstudio/AI-upscaling-models/releases/download/PureVision/2x_PureVision.pth
+- image compare node:
+- https://github.com/quasiblob/ComfyUI-EsesImageCompare
