@@ -104,7 +104,7 @@ These tools are meant for exploration and intuition, not absolute ground-truth j
 
 1. Clone or download this repo into your `ComfyUI/custom_nodes/` folder:
    ```bash
-   git clone https://github.com/yourname/ComfyUI-MultiAnalysisHeatmaps
+   git clone https://github.com/Justify87/ComfyUI-Multi-Analysis-Heatmaps
 
 
 ## Additionals
