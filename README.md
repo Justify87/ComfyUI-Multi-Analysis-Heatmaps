@@ -96,7 +96,7 @@ These tools are meant for exploration and intuition, not absolute ground-truth j
 
 ## 📸 Example
 
-![Heatmap Example](Screenshot 2025-09-05 002633.png)
+![Heatmap Example](Screenshot.png)
 
 ---
 
