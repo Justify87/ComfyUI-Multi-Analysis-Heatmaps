@@ -1,0 +1,273 @@
+{
+  "1": {
+    "inputs": {
+      "model_name": "2x_PureVision.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "2": {
+    "inputs": {
+      "upscale_model": [
+        "1",
+        0
+      ],
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": "olena.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "16": {
+    "inputs": {
+      "images": [
+        "53",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "21": {
+    "inputs": {
+      "images": [
+        "53",
+        1
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "22": {
+    "inputs": {
+      "images": [
+        "53",
+        2
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "23": {
+    "inputs": {
+      "images": [
+        "53",
+        3
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "24": {
+    "inputs": {
+      "images": [
+        "53",
+        4
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "25": {
+    "inputs": {
+      "images": [
+        "53",
+        5
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "26": {
+    "inputs": {
+      "images": [
+        "53",
+        7
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "43": {
+    "inputs": {
+      "images": [
+        "53",
+        12
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "44": {
+    "inputs": {
+      "images": [
+        "53",
+        13
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "45": {
+    "inputs": {
+      "images": [
+        "53",
+        11
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "46": {
+    "inputs": {
+      "images": [
+        "53",
+        15
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "47": {
+    "inputs": {
+      "images": [
+        "53",
+        16
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "48": {
+    "inputs": {
+      "images": [
+        "53",
+        14
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "49": {
+    "inputs": {
+      "images": [
+        "53",
+        19
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "50": {
+    "inputs": {
+      "images": [
+        "53",
+        18
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "52": {
+    "inputs": {
+      "images": [
+        "53",
+        20
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "53": {
+    "inputs": {
+      "align_mode": "resize_b_to_a",
+      "color_map": "jet",
+      "invert_ssim": true,
+      "ms_scales": 3,
+      "enable_lpips": true,
+      "edge_percentile": 0.85,
+      "wavelet_levels": 3,
+      "denoise_sigma": 2,
+      "denoise_gain": 2,
+      "roundtrip_scale": 0.5,
+      "roundtrip_kernel": "bicubic",
+      "image_a": [
+        "3",
+        0
+      ],
+      "image_b": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "MultiAnalysisNode",
+    "_meta": {
+      "title": "Image Analysis (SSIM/LPIPS/FFT/ΔE2000)"
+    }
+  },
+  "57": {
+    "inputs": {
+      "Blend Mode": "normal",
+      "Reset Node Size": null,
+      "image_a": [
+        "3",
+        0
+      ],
+      "image_b": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "EsesImageCompare",
+    "_meta": {
+      "title": "Eses Image Compare"
+    }
+  }
+}
