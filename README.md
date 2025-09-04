@@ -96,7 +96,7 @@ These tools are meant for exploration and intuition, not absolute ground-truth j
 
 ## 📸 Example
 
-_Coming soon_ — screenshots showing SSIM, LPIPS, ΔE2000, and FFT maps on the same pair of images.
+![Heatmap Example](Screenshot 2025-09-05 002633.png)
 
 ---
 
