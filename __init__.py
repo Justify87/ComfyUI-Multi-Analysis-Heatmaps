@@ -1,7 +1,7 @@
-# ComfyUI Multi-Analysis Heatmaps (Extended & Optimized, Robust I/O)
-# Version: 3.0.1
+# ComfyUI Multi-Analysis Heatmaps (Extended & Optimized, Zero-Sensitive SSIM)
+# Version: 3.0.2
 # Parallel outputs:
-#  - SSIM, DSSIM, MS-SSIM
+#  - SSIM, DSSIM, MS-SSIM  (now zero-sensitive, fixed-range normalization)
 #  - LPIPS (approx via VGG16 features, optional)
 #  - Per-pixel abs diff, Residual (signed)
 #  - FFT spectra (orig, upscaled, diff)
@@ -27,7 +27,7 @@ import torch.nn.functional as F
 NODE_NAME = "Image Analysis (SSIM/LPIPS/FFT/ΔE2000)"
 NODE_CATEGORY = "Image/Analysis"
 NODE_AUTHOR = "chatgpt"
-NODE_VERSION = "3.0.1"
+NODE_VERSION = "3.0.2"
 
 # ======================= Caches ==========================
 _GAUSS2D_CACHE = {}   # (dev, idx, dtype, ch, win, sigma) -> [C,1,win,win]
@@ -40,104 +40,79 @@ def _dev_key(device: torch.device, dtype=None):
 # ======================= Tensor helpers ==================
 def _squeeze_to_4d(img: torch.Tensor) -> torch.Tensor:
     """
-    Squeeze überzählige Singleton-Dimensionen (size==1), bis der Tensor <= 4D ist.
-    Bewahrt Batch/Channels, weil wir nur >4D-Dims reduzieren.
+    Squeeze superfluous singleton dims (==1) until rank <= 4.
+    Keeps batch/channels semantics; only squeezes when rank > 4.
     """
     if not isinstance(img, torch.Tensor):
         raise TypeError(f"_squeeze_to_4d expected torch.Tensor, got {type(img)}")
-
     t = img
-    # so lange rank > 4 und es gibt mind. eine 1er-Dimension -> squeeze genau EINE pro Iteration
     while t.dim() > 4 and 1 in t.shape:
-        # squeeze die erste Singleton-Dimension > 0 (Batch lassen wir typischerweise in Ruhe,
-        # aber bei rank>4 ist es egal – Batch ist i.d.R. dim 0 und bleibt 1; wir können auch die erste 1 nehmen)
         for d, s in enumerate(t.shape):
             if s == 1:
                 t = t.squeeze(d)
                 break
     return t
 
-
 def to_bchw(img: torch.Tensor) -> torch.Tensor:
     """
     Robust conversion to [B,C,H,W].
-    Akzeptiert u.a. [B,H,W,C], [B,C,H,W], [H,W,C], [C,H,W], [H,W] und
-    auch höhere Ränge mit Singleton-Dims wie [B,C,1,H,W] – diese werden
-    vorab auf 4D gesqueezed.
+    Accepts [B,H,W,C], [B,C,H,W], [H,W,C], [C,H,W], [H,W] and higher ranks with singleton dims.
     """
     if not isinstance(img, torch.Tensor):
         raise TypeError(f"to_bchw expected torch.Tensor, got {type(img)}")
-
     x = _squeeze_to_4d(img)
 
     if x.dim() == 4:
-        # [B,H,W,C] -> [B,C,H,W]
-        if x.shape[-1] in (1, 3):
+        if x.shape[-1] in (1, 3):  # BHWC -> BCHW
             return x.permute(0, 3, 1, 2).contiguous()
-        # assume already [B,C,H,W]
-        return x.contiguous()
+        return x.contiguous()       # assume BCHW
 
     if x.dim() == 3:
-        # [H,W,C] -> [1,C,H,W]
-        if x.shape[-1] in (1, 3):
+        if x.shape[-1] in (1, 3):   # [H,W,C] -> [1,C,H,W]
             return x.permute(2, 0, 1).unsqueeze(0).contiguous()
-        # [C,H,W] -> [1,C,H,W]
-        if x.shape[0] in (1, 3):
+        if x.shape[0] in (1, 3):    # [C,H,W] -> [1,C,H,W]
             return x.unsqueeze(0).contiguous()
-        # unbekannt, behandle als [C,H,W]
-        return x.unsqueeze(0).contiguous()
+        return x.unsqueeze(0).contiguous()  # fallback assume [C,H,W]
 
     if x.dim() == 2:
-        # [H,W] -> [1,1,H,W]
-        return x.unsqueeze(0).unsqueeze(0).contiguous()
+        return x.unsqueeze(0).unsqueeze(0).contiguous()  # [H,W] -> [1,1,H,W]
 
     raise ValueError(f"to_bchw expected 2D/3D/4D tensor after squeeze, got shape {tuple(x.shape)}")
-
 
 def to_bhwc(img: torch.Tensor) -> torch.Tensor:
     """
     Robust conversion to [B,H,W,C].
-    Akzeptiert u.a. [B,C,H,W], [B,H,W,C], [C,H,W], [H,W,C], [H,W] und
-    auch höhere Ränge mit Singleton-Dims (z.B. [B,C,1,H,W]).
+    Accepts [B,C,H,W], [B,H,W,C], [C,H,W], [H,W,C], [H,W] and higher ranks with singleton dims.
     """
     if not isinstance(img, torch.Tensor):
         raise TypeError(f"to_bhwc expected torch.Tensor, got {type(img)}")
-
     x = _squeeze_to_4d(img)
 
     if x.dim() == 4:
-        # bereits BHWC?
-        if x.shape[-1] in (1, 3):
+        if x.shape[-1] in (1, 3):   # already BHWC
             return x.contiguous()
-        # sonst BCHW -> BHWC
-        return x.permute(0, 2, 3, 1).contiguous()
+        return x.permute(0, 2, 3, 1).contiguous()  # BCHW -> BHWC
 
     if x.dim() == 3:
-        # [H,W,C] -> [1,H,W,C]
-        if x.shape[-1] in (1, 3):
+        if x.shape[-1] in (1, 3):   # [H,W,C] -> [1,H,W,C]
             return x.unsqueeze(0).contiguous()
-        # [C,H,W] -> [1,H,W,C]
-        if x.shape[0] in (1, 3):
+        if x.shape[0] in (1, 3):    # [C,H,W] -> [1,H,W,C]
             return x.permute(1, 2, 0).unsqueeze(0).contiguous()
-        # unbekannt, behandle als [C,H,W]
-        return x.permute(1, 2, 0).unsqueeze(0).contiguous()
+        return x.permute(1, 2, 0).unsqueeze(0).contiguous()  # fallback assume [C,H,W]
 
     if x.dim() == 2:
-        # [H,W] -> [1,H,W,1]
-        return x.unsqueeze(0).unsqueeze(-1).contiguous()
+        return x.unsqueeze(0).unsqueeze(-1).contiguous()     # [H,W] -> [1,H,W,1]
 
     raise ValueError(f"to_bhwc expected 2D/3D/4D tensor after squeeze, got shape {tuple(x.shape)}")
 
-
 def _ensure_bhwc3(x: torch.Tensor) -> torch.Tensor:
     """
-    Für ComfyUI-Preview: sichere BHWC & 3 Kanäle.
+    Ensure BHWC with 3 channels for ComfyUI preview stability.
     """
     t = to_bhwc(x)
     if t.shape[-1] == 1:
         t = t.repeat(1, 1, 1, 3)
     return t
-
 
 def ensure_same_device(*tensors):
     dev = None
@@ -201,6 +176,14 @@ def normalize01(x: torch.Tensor) -> torch.Tensor:
     xmax = x.amax(dim=(2,3), keepdim=True)
     span = torch.clamp(xmax - xmin, min=1e-8)
     return torch.clamp((x - xmin) / span, 0.0, 1.0)
+
+# ---- Zero-sensitive normalization for difference-like maps (SSIM family)
+def normalize_heatmap_fixed(x: torch.Tensor, fixed_max: float = 0.02) -> torch.Tensor:
+    """
+    Map a non-negative difference map to [0,1] using a fixed upper bound.
+    Values << fixed_max -> near 0 (black), values >= fixed_max -> 1 (white).
+    """
+    return torch.clamp(x / float(fixed_max), 0.0, 1.0)
 
 # ======================= Gaussian Kernels =================
 def gaussian2d(window_size=11, sigma=1.5, channels=3, device="cpu", dtype=torch.float32):
@@ -334,7 +317,7 @@ def lpips_heatmap(a: torch.Tensor, b: torch.Tensor):
             d = F.interpolate(d, size=(H, W), mode="bilinear", align_corners=False)
             maps.append(d)
         m = torch.stack(maps, dim=0).mean(dim=0)  # [B,1,H,W]
-        m01 = normalize01(m)
+        m01 = normalize01(m)  # NOTE: LPIPS keeps per-image norm (heuristic visual)
         score = float(m.mean().item())
         return m01, f"LPIPS approx (VGG16 map mean): {score:.6f}"
 
@@ -589,7 +572,7 @@ class MultiAnalysisNode:
         # Denoiser residuum
         "IMAGE",  # denoiser_residual_visual
         # Round-trip
-        "IMAGE",  # roundtrip_diff_heatmap
+        "IMAGE",  # roundtrip_diff_heatmap (B vs RT(B))
     )
     RETURN_NAMES = (
         "ssim_heatmap",
@@ -631,6 +614,9 @@ class MultiAnalysisNode:
         a = a.to(dtype=torch.float32, copy=False)
         b = b.to(dtype=torch.float32, copy=False)
 
+        # Fixed range for difference-like SSIM visualizations
+        SSIM_FIXED_MAX = 0.02
+
         device_type = "cuda" if a.device.type == "cuda" else "cpu"
         with torch.no_grad(), torch.autocast(device_type=device_type, enabled=False):
             # Align
@@ -641,20 +627,26 @@ class MultiAnalysisNode:
             else:
                 a, b = pad_to_max(a, b)
 
-            # ---------- SSIM & DSSIM ----------
-            ssim = ssim_map(a, b)                        # [B,1,H,W]
-            dssim = 1.0 - ssim
-            ssim_vis = dssim if invert_ssim else ssim
-            ssim_heat  = apply_colormap(normalize01(ssim_vis), color_map)
-            dssim_heat = apply_colormap(normalize01(dssim), color_map)
-            ssim_text = f"SSIM mean: {float(ssim.mean().item()):.6f}"
+            # ---------- SSIM & DSSIM (zero-sensitive visualization) ----------
+            ssim = ssim_map(a, b)                        # [B,1,H,W] in [0,1]
+            dssim = 1.0 - ssim                           # difference-like map in [0,1]
+            dssim_norm = normalize_heatmap_fixed(dssim, fixed_max=SSIM_FIXED_MAX)  # zero-sensitive
+            # ssim_heat: if invert -> show diff (bright=change), else -> show similarity (bright=similar)
+            ssim_heat = apply_colormap(dssim_norm if invert_ssim else (1.0 - dssim_norm), color_map)
+            dssim_heat = apply_colormap(dssim_norm, color_map)
 
-            # ---------- MS-SSIM ----------
-            ms = ms_ssim_map(a, b, scales=int(ms_scales))
-            ms_vis = (1.0 - ms) if invert_ssim else ms
-            ms_heat = apply_colormap(normalize01(ms_vis), color_map)
+            # for debug text: add L1 & maxAbs difference
+            l1 = torch.mean(torch.abs(a - b)).item()
+            mx = torch.max(torch.abs(a - b)).item()
+            ssim_text = f"SSIM mean: {float(ssim.mean().item()):.6f} | L1: {l1:.3e} | maxAbs: {mx:.3e}"
 
-            # ---------- LPIPS (optional) ----------
+            # ---------- MS-SSIM (zero-sensitive visualization) ----------
+            ms = ms_ssim_map(a, b, scales=int(ms_scales))        # [B,1,H,W]
+            ms_diff = 1.0 - ms
+            ms_norm = normalize_heatmap_fixed(ms_diff, fixed_max=SSIM_FIXED_MAX)
+            ms_heat = apply_colormap(ms_norm if invert_ssim else (1.0 - ms_norm), color_map)
+
+            # ---------- LPIPS (optional, keeps per-image normalize) ----------
             if enable_lpips:
                 lp_map, lp_text = lpips_heatmap(a, b)
                 lpips_heat = apply_colormap(lp_map, color_map) if lp_map is not None else torch.zeros_like(ssim_heat)
