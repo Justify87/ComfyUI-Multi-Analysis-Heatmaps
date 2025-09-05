@@ -1,7 +1,7 @@
-# ComfyUI Multi-Analysis Heatmaps (Extended & Optimized, Zero-Sensitive SSIM)
-# Version: 3.0.2
+# ComfyUI Multi-Analysis Heatmaps (Extended & Optimized, Adaptive SSIM Visualization)
+# Version: 3.0.3
 # Parallel outputs:
-#  - SSIM, DSSIM, MS-SSIM  (now zero-sensitive, fixed-range normalization)
+#  - SSIM, DSSIM, MS-SSIM  (adaptive, zero-sensitive visualization via percentile capping)
 #  - LPIPS (approx via VGG16 features, optional)
 #  - Per-pixel abs diff, Residual (signed)
 #  - FFT spectra (orig, upscaled, diff)
@@ -27,7 +27,7 @@ import torch.nn.functional as F
 NODE_NAME = "Image Analysis (SSIM/LPIPS/FFT/ΔE2000)"
 NODE_CATEGORY = "Image/Analysis"
 NODE_AUTHOR = "chatgpt"
-NODE_VERSION = "3.0.2"
+NODE_VERSION = "3.0.3"
 
 # ======================= Caches ==========================
 _GAUSS2D_CACHE = {}   # (dev, idx, dtype, ch, win, sigma) -> [C,1,win,win]
@@ -177,13 +177,27 @@ def normalize01(x: torch.Tensor) -> torch.Tensor:
     span = torch.clamp(xmax - xmin, min=1e-8)
     return torch.clamp((x - xmin) / span, 0.0, 1.0)
 
-# ---- Zero-sensitive normalization for difference-like maps (SSIM family)
-def normalize_heatmap_fixed(x: torch.Tensor, fixed_max: float = 0.02) -> torch.Tensor:
+# ---- Fixed/Adaptive normalization helpers for difference-like maps (SSIM family)
+def _percentile(x: torch.Tensor, q: float):
+    """Returns per-sample percentile (q in [0,1]) for flattened spatial dims."""
+    q = float(max(0.0, min(1.0, q)))
+    flat = x.flatten(1)  # [B,HW]
+    try:
+        p = torch.quantile(flat, q, dim=1)  # [B]
+    except Exception:
+        vals, _ = torch.sort(flat, dim=1)
+        k = int(q * (vals.shape[1] - 1))
+        p = vals[:, k]
+    return p.view(-1, 1, 1, 1)  # [B,1,1,1]
+
+def normalize_heatmap_adaptive(x: torch.Tensor, base_min: float = 0.02, qcap: float = 0.98) -> torch.Tensor:
     """
-    Map a non-negative difference map to [0,1] using a fixed upper bound.
-    Values << fixed_max -> near 0 (black), values >= fixed_max -> 1 (white).
+    Map a non-negative difference map to [0,1] using an adaptive cap:
+      cap = max(base_min, percentile(x, qcap)) per image.
+    This keeps identical images black, avoids 'all white' saturation for small but widespread diffs.
     """
-    return torch.clamp(x / float(fixed_max), 0.0, 1.0)
+    cap = torch.clamp(_percentile(x, qcap), min=base_min)
+    return torch.clamp(x / cap, 0.0, 1.0)
 
 # ======================= Gaussian Kernels =================
 def gaussian2d(window_size=11, sigma=1.5, channels=3, device="cpu", dtype=torch.float32):
@@ -614,8 +628,9 @@ class MultiAnalysisNode:
         a = a.to(dtype=torch.float32, copy=False)
         b = b.to(dtype=torch.float32, copy=False)
 
-        # Fixed range for difference-like SSIM visualizations
-        SSIM_FIXED_MAX = 0.02
+        # Adaptive cap defaults for SSIM-like visualizations
+        SSIM_BASE_MIN = 0.02   # minimum cap (keeps identical images black)
+        SSIM_QCAP     = 0.98   # percentile cap (prevents "all white" when diffs are widespread but small)
 
         device_type = "cuda" if a.device.type == "cuda" else "cpu"
         with torch.no_grad(), torch.autocast(device_type=device_type, enabled=False):
@@ -627,23 +642,24 @@ class MultiAnalysisNode:
             else:
                 a, b = pad_to_max(a, b)
 
-            # ---------- SSIM & DSSIM (zero-sensitive visualization) ----------
-            ssim = ssim_map(a, b)                        # [B,1,H,W] in [0,1]
-            dssim = 1.0 - ssim                           # difference-like map in [0,1]
-            dssim_norm = normalize_heatmap_fixed(dssim, fixed_max=SSIM_FIXED_MAX)  # zero-sensitive
+            # ---------- SSIM & DSSIM (adaptive, zero-sensitive visualization) ----------
+            ssim = ssim_map(a, b)                  # [B,1,H,W] in [0,1]
+            dssim = (1.0 - ssim).clamp_(0, 1)      # difference-like
+            dssim_norm = normalize_heatmap_adaptive(dssim, base_min=SSIM_BASE_MIN, qcap=SSIM_QCAP)
+
             # ssim_heat: if invert -> show diff (bright=change), else -> show similarity (bright=similar)
             ssim_heat = apply_colormap(dssim_norm if invert_ssim else (1.0 - dssim_norm), color_map)
             dssim_heat = apply_colormap(dssim_norm, color_map)
 
-            # for debug text: add L1 & maxAbs difference
+            # debug text additions
             l1 = torch.mean(torch.abs(a - b)).item()
             mx = torch.max(torch.abs(a - b)).item()
             ssim_text = f"SSIM mean: {float(ssim.mean().item()):.6f} | L1: {l1:.3e} | maxAbs: {mx:.3e}"
 
-            # ---------- MS-SSIM (zero-sensitive visualization) ----------
-            ms = ms_ssim_map(a, b, scales=int(ms_scales))        # [B,1,H,W]
-            ms_diff = 1.0 - ms
-            ms_norm = normalize_heatmap_fixed(ms_diff, fixed_max=SSIM_FIXED_MAX)
+            # ---------- MS-SSIM (same adaptive logic) ----------
+            ms = ms_ssim_map(a, b, scales=int(ms_scales))  # [B,1,H,W]
+            ms_diff = (1.0 - ms).clamp_(0,1)
+            ms_norm = normalize_heatmap_adaptive(ms_diff, base_min=SSIM_BASE_MIN, qcap=SSIM_QCAP)
             ms_heat = apply_colormap(ms_norm if invert_ssim else (1.0 - ms_norm), color_map)
 
             # ---------- LPIPS (optional, keeps per-image normalize) ----------
